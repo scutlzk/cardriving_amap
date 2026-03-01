@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">
+    <title>驾车时间计算</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                         "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        }
+        #map { width: 100%; height: 100%; }
+
+        .panel {
+            position: absolute;
+            background: rgba(255,255,255,0.94);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border-radius: 14px;
+            box-shadow: 0 6px 28px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.05);
+            z-index: 1000;
+        }
+
+        /* ---- 右上角信息面板 ---- */
+        .info-panel { top: 16px; right: 16px; padding: 20px 24px; max-width: 300px; }
+        .info-panel .label {
+            font-size: 11px; font-weight: 600; color: #8c8c8c;
+            letter-spacing: 2px; margin-bottom: 8px;
+        }
+        .info-panel .dest-item {
+            display: flex; align-items: center; gap: 8px;
+            padding: 3px 0; font-size: 13px; color: #262626; font-weight: 500;
+        }
+        .info-panel .dest-dot {
+            width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+        }
+        .info-panel .hint {
+            margin-top: 12px; padding-top: 12px;
+            border-top: 1px solid rgba(0,0,0,0.06);
+            font-size: 12px; color: #8c8c8c; line-height: 1.7;
+        }
+
+        /* ---- 工具栏 ---- */
+        .toolbar {
+            position: absolute; top: 16px; left: 16px;
+            display: flex; gap: 8px; z-index: 1001;
+        }
+        .toolbar .btn {
+            padding: 10px 20px; border: none; border-radius: 10px;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+            transition: all 0.2s; font-family: inherit; letter-spacing: 0.5px;
+        }
+        .btn-primary { background: #1677ff; color: #fff; box-shadow: 0 4px 14px rgba(22,119,255,0.35); }
+        .btn-primary:hover { background: #4096ff; transform: translateY(-1px); }
+        .btn-secondary {
+            background: rgba(255,255,255,0.94); color: #595959;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08); backdrop-filter: blur(14px);
+        }
+        .btn-secondary:hover { background: #f0f0f0; }
+        .btn-drawing {
+            background: #ff4d4f; color: #fff;
+            box-shadow: 0 4px 14px rgba(255,77,79,0.35); animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%,100% { box-shadow: 0 4px 14px rgba(255,77,79,0.35); }
+            50%     { box-shadow: 0 4px 22px rgba(255,77,79,0.55); }
+        }
+
+        /* ---- 批量结果面板 ---- */
+        .results-panel {
+            position: absolute; top: 62px; left: 16px;
+            width: 400px; max-height: calc(100vh - 90px);
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border-radius: 14px; box-shadow: 0 6px 28px rgba(0,0,0,0.10);
+            z-index: 1000; overflow: hidden;
+            display: flex; flex-direction: column;
+            transform: translateX(-440px); opacity: 0;
+            transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+        }
+        .results-panel.show { transform: translateX(0); opacity: 1; }
+        .results-header {
+            padding: 16px 20px 12px;
+            border-bottom: 1px solid rgba(0,0,0,0.06);
+            display: flex; align-items: baseline; gap: 8px; flex-shrink: 0;
+        }
+        .results-title { font-size: 15px; font-weight: 600; color: #262626; }
+        .results-saved { font-size: 11px; color: #52c41a; font-weight: 500; }
+        .results-body { overflow-y: auto; flex: 1; }
+        .results-loading { padding: 32px 20px; text-align: center; font-size: 13px; color: #bfbfbf; }
+        .result-row {
+            padding: 12px 20px;
+            border-bottom: 1px solid rgba(0,0,0,0.03);
+            transition: background 0.15s;
+        }
+        .result-row:hover { background: rgba(22,119,255,0.03); }
+        .result-row-head { display: flex; align-items: center; gap: 12px; }
+        .result-num {
+            width: 26px; height: 26px; background: #1677ff; color: #fff;
+            border-radius: 50%; text-align: center; line-height: 26px;
+            font-size: 12px; font-weight: 700; flex-shrink: 0;
+        }
+        .result-addr {
+            font-size: 13px; color: #262626; flex: 1; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .result-dests { margin-top: 6px; padding-left: 38px; }
+        .result-dest-line {
+            display: flex; align-items: center; gap: 8px;
+            padding: 3px 0; font-size: 12px; color: #595959;
+        }
+        .result-dest-line .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+        .result-dest-line .name {
+            flex: 1; min-width: 0; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap;
+        }
+        .result-dest-line .val { color: #1677ff; font-weight: 600; flex-shrink: 0; }
+        .result-dest-line .dist { color: #8c8c8c; flex-shrink: 0; min-width: 55px; text-align: right; }
+        .result-dest-line .err { color: #ff4d4f; }
+
+        /* ---- 单点结果面板 ---- */
+        .result-panel {
+            bottom: 28px; left: 50%;
+            transform: translateX(-50%) translateY(120px);
+            padding: 16px 20px; min-width: 340px; max-width: 520px;
+            opacity: 0; transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+        }
+        .result-panel.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .result-origin {
+            font-size: 12px; color: #8c8c8c; margin-bottom: 10px; padding-bottom: 10px;
+            border-bottom: 1px solid rgba(0,0,0,0.06);
+        }
+        .result-calc { text-align: center; font-size: 15px; color: #bfbfbf; }
+        .rm-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+        .rm-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .rm-name {
+            font-size: 13px; color: #262626; flex: 1; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .rm-time { font-size: 16px; font-weight: 700; color: #1677ff; flex-shrink: 0; }
+        .rm-dist { font-size: 12px; color: #8c8c8c; flex-shrink: 0; min-width: 60px; text-align: right; }
+        .rm-err { font-size: 12px; color: #ff4d4f; flex-shrink: 0; }
+
+        /* ---- 标记 ---- */
+        .amap-marker-label {
+            border: none !important; background: transparent !important;
+            padding: 0 !important; white-space: nowrap !important;
+        }
+        .tag {
+            display: inline-block; padding: 3px 10px; border-radius: 6px;
+            font-size: 12px; font-weight: 600; letter-spacing: 0.5px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12); color: #fff;
+        }
+        .tag-origin { background: #1677ff; }
+        .num-marker {
+            width: 28px; height: 28px; background: #1677ff; color: #fff;
+            border-radius: 50%; text-align: center; line-height: 28px;
+            font-size: 12px; font-weight: 700;
+            box-shadow: 0 2px 8px rgba(22,119,255,0.45); border: 2px solid #fff;
+        }
+
+        /* ---- 图例 ---- */
+        .legend {
+            position: absolute; bottom: 28px; right: 16px;
+            background: rgba(255,255,255,0.94);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border-radius: 10px; padding: 12px 16px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            z-index: 1000; display: none;
+        }
+        .legend-title { font-size: 12px; font-weight: 600; color: #262626; margin-bottom: 6px; }
+        .legend-bar {
+            width: 160px; height: 14px; border-radius: 7px;
+            background: linear-gradient(to right,
+                hsl(120,70%,45%), hsl(90,70%,48%), hsl(60,75%,48%),
+                hsl(30,80%,50%), hsl(0,75%,50%));
+        }
+        .legend-labels {
+            display: flex; justify-content: space-between;
+            margin-top: 4px; font-size: 11px; color: #8c8c8c;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <div class="toolbar">
+        <button class="btn btn-primary" id="btnDraw" onclick="startDraw()">画圈分析</button>
+        <button class="btn btn-secondary" onclick="undoAll()">撤销</button>
+    </div>
+
+    <div class="panel info-panel" id="infoPanel"></div>
+
+    <div class="results-panel" id="resultsPanel">
+        <div class="results-header">
+            <span class="results-title">区域分析结果</span>
+            <span class="results-saved" id="resultsSaved" style="display:none">已写入 results.json</span>
+        </div>
+        <div class="results-body" id="resultsList"></div>
+    </div>
+
+    <div class="panel result-panel" id="resultPanel">
+        <div id="resultContent"></div>
+    </div>
+
+    <div class="legend" id="legend">
+        <div class="legend-title">驾车最短耗时</div>
+        <div class="legend-bar"></div>
+        <div class="legend-labels">
+            <span id="legendMin">近</span>
+            <span id="legendMax">远</span>
+        </div>
+    </div>
+
+    <script>
+        window._AMapSecurityConfig = { securityJsCode: "{{.SecurityKey}}" };
+    </script>
+    <script src="https://webapi.amap.com/loader.js"></script>
+    <script>
+        var DESTS = {{.DestsJSON}};
+        var DEST_COLORS = ["#ff4d4f","#722ed1","#13c2c2","#eb2f96","#fa8c16","#52c41a","#2f54eb","#faad14"];
+        var map, mouseTool, AMapRef;
+        var originMarker = null, currentCircle = null, pointMarkers = [], isDrawing = false;
+        var heatPoints = [], heatCircles = [];
+
+        AMapLoader.load({
+            key: "{{.JSKey}}",
+            version: "2.0",
+            plugins: ["AMap.MouseTool"],
+        }).then(function (AMap) {
+            AMapRef = AMap;
+            map = new AMap.Map("map", { zoom: 13, center: [parseFloat(DESTS[0].lng), parseFloat(DESTS[0].lat)], viewMode: "2D" });
+
+            DESTS.forEach(function (d, i) {
+                var c = DEST_COLORS[i % DEST_COLORS.length];
+                new AMap.Marker({
+                    position: [parseFloat(d.lng), parseFloat(d.lat)],
+                    map: map,
+                    label: {
+                        content: '<span class="tag" style="background:' + c + '">目的地' + (i + 1) + '</span>',
+                        direction: "top", offset: new AMap.Pixel(0, -4),
+                    },
+                    zIndex: 200,
+                });
+            });
+
+            buildInfoPanel();
+
+            mouseTool = new AMap.MouseTool(map);
+            mouseTool.on("draw", function (event) {
+                isDrawing = false;
+                mouseTool.close(false);
+                document.getElementById("btnDraw").className = "btn btn-primary";
+                document.getElementById("btnDraw").textContent = "画圈分析";
+                currentCircle = event.obj;
+                currentCircle.setOptions({
+                    fillColor: "#1677ff", fillOpacity: 0.08,
+                    strokeColor: "#1677ff", strokeOpacity: 0.5, strokeWeight: 2, strokeStyle: "dashed",
+                });
+                var center = currentCircle.getCenter();
+                var radius = currentCircle.getRadius();
+                var points = generatePoints(center, radius);
+                points.forEach(function (pt, i) {
+                    pointMarkers.push(new AMap.Marker({
+                        position: new AMap.LngLat(pt[0], pt[1]), map: map,
+                        content: '<div class="num-marker">' + (i + 1) + "</div>",
+                        offset: new AMap.Pixel(-14, -14), zIndex: 150,
+                    }));
+                });
+                batchCalculate(points);
+            });
+
+            map.on("click", function (e) {
+                if (isDrawing) return;
+                var lng = e.lnglat.getLng().toFixed(6);
+                var lat = e.lnglat.getLat().toFixed(6);
+                if (originMarker) {
+                    originMarker.setPosition(new AMap.LngLat(lng, lat));
+                } else {
+                    originMarker = new AMap.Marker({
+                        position: new AMap.LngLat(lng, lat), map: map,
+                        label: { content: '<span class="tag tag-origin">起点</span>', direction: "top", offset: new AMap.Pixel(0, -4) },
+                        zIndex: 150,
+                    });
+                }
+                var panel = document.getElementById("resultPanel");
+                var content = document.getElementById("resultContent");
+                panel.classList.add("show");
+                content.innerHTML = '<div class="result-calc">计算中...</div>';
+
+                fetch("/api/driving?origin=" + lng + "," + lat)
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (data.error) { content.innerHTML = '<div class="result-calc">计算失败</div>'; return; }
+                        var html = '<div class="result-origin">' + data.address + '</div>';
+                        var minSec = Infinity;
+                        data.results.forEach(function (r, i) {
+                            var c = DEST_COLORS[i % DEST_COLORS.length];
+                            if (r.error) {
+                                html += '<div class="rm-row"><span class="rm-dot" style="background:'+c+'"></span><span class="rm-name">'+r.destination+'</span><span class="rm-err">失败</span></div>';
+                            } else {
+                                html += '<div class="rm-row"><span class="rm-dot" style="background:'+c+'"></span><span class="rm-name">'+r.destination+'</span><span class="rm-time">'+r.duration+'</span><span class="rm-dist">'+r.distance+'</span></div>';
+                                if (r.seconds > 0 && r.seconds < minSec) minSec = r.seconds;
+                            }
+                        });
+                        content.innerHTML = html;
+                        if (minSec < Infinity) {
+                            heatPoints.push({ lng: parseFloat(lng), lat: parseFloat(lat), seconds: minSec });
+                            renderHeatOverlays();
+                        }
+                    })
+                    .catch(function () { content.innerHTML = '<div class="result-calc">请求失败</div>'; });
+            });
+
+            loadExistingResults();
+        }).catch(function (e) { console.error("地图加载失败:", e); });
+
+        /* ============ 信息面板 ============ */
+        function buildInfoPanel() {
+            var el = document.getElementById("infoPanel");
+            var html = '<div class="label">目的地</div>';
+            DESTS.forEach(function (d, i) {
+                html += '<div class="dest-item"><span class="dest-dot" style="background:' +
+                    DEST_COLORS[i % DEST_COLORS.length] + '"></span>' + d.address + '</div>';
+            });
+            html += '<div class="hint">点击地图选择起点，或使用「画圈分析」批量计算</div>';
+            el.innerHTML = html;
+        }
+
+        /* ============ 热力覆盖 ============ */
+        function loadExistingResults() {
+            fetch("/api/results").then(function (r) { return r.json(); }).then(function (records) {
+                if (!records || !records.length) return;
+                records.forEach(function (rec) {
+                    if (!rec.points) return;
+                    rec.points.forEach(function (pt) {
+                        var c = pt.coordinate ? pt.coordinate.split(",") : null;
+                        if (!c || c.length !== 2) return;
+                        var minSec = Infinity;
+                        if (pt.destinations && pt.destinations.length) {
+                            pt.destinations.forEach(function (d) { if (d.seconds > 0 && d.seconds < minSec) minSec = d.seconds; });
+                        } else if (pt.seconds > 0) {
+                            minSec = pt.seconds;
+                        }
+                        if (minSec < Infinity) {
+                            heatPoints.push({ lng: parseFloat(c[0]), lat: parseFloat(c[1]), seconds: minSec });
+                        }
+                    });
+                });
+                renderHeatOverlays();
+            }).catch(function () {});
+        }
+
+        function timeToColor(seconds, minSec, maxSec) {
+            if (maxSec <= minSec) return "hsl(120,70%,45%)";
+            var t = (seconds - minSec) / (maxSec - minSec);
+            return "hsl(" + Math.round(120 * (1 - t)) + ",75%,48%)";
+        }
+
+        function renderHeatOverlays() {
+            heatCircles.forEach(function (c) { map.remove(c); });
+            heatCircles = [];
+            if (!heatPoints.length) { document.getElementById("legend").style.display = "none"; return; }
+            var minSec = Infinity, maxSec = 0;
+            heatPoints.forEach(function (p) {
+                if (p.seconds < minSec) minSec = p.seconds;
+                if (p.seconds > maxSec) maxSec = p.seconds;
+            });
+            heatPoints.forEach(function (p) {
+                var color = timeToColor(p.seconds, minSec, maxSec);
+                heatCircles.push(new AMapRef.Circle({
+                    center: [p.lng, p.lat], radius: 500,
+                    fillColor: color, fillOpacity: 0.38,
+                    strokeColor: color, strokeOpacity: 0.15, strokeWeight: 1,
+                    map: map, zIndex: 10, bubble: true,
+                }));
+            });
+            document.getElementById("legend").style.display = "block";
+            document.getElementById("legendMin").textContent = fmtSec(minSec);
+            document.getElementById("legendMax").textContent = fmtSec(maxSec);
+        }
+
+        function fmtSec(s) {
+            var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+            if (h > 0) return h + "h" + m + "m";
+            return m > 0 ? m + "min" : s + "s";
+        }
+
+        /* ============ 画圈工具 ============ */
+        function startDraw() {
+            clearCircleData(); mouseTool.close(true); isDrawing = true;
+            document.getElementById("btnDraw").className = "btn btn-drawing";
+            document.getElementById("btnDraw").textContent = "绘制中...";
+            mouseTool.circle({ fillColor: "#1677ff", fillOpacity: 0.08, strokeColor: "#1677ff", strokeOpacity: 0.5, strokeWeight: 2, strokeStyle: "dashed" });
+        }
+        function undoAll() {
+            clearCircleData(); mouseTool.close(true); isDrawing = false;
+            document.getElementById("btnDraw").className = "btn btn-primary";
+            document.getElementById("btnDraw").textContent = "画圈分析";
+        }
+        function clearCircleData() {
+            if (currentCircle) { map.remove(currentCircle); currentCircle = null; }
+            pointMarkers.forEach(function (m) { map.remove(m); }); pointMarkers = [];
+            document.getElementById("resultsPanel").classList.remove("show");
+            document.getElementById("resultsSaved").style.display = "none";
+        }
+
+        function generatePoints(center, radius) {
+            var pts = [], cLng = center.getLng(), cLat = center.getLat();
+            var lr = cLat * Math.PI / 180;
+            pts.push([cLng, cLat]);
+            for (var i = 0; i < 3; i++) {
+                var a = i * 2 * Math.PI / 3, r = radius / 3;
+                pts.push([cLng + r * Math.sin(a) / (111320 * Math.cos(lr)), cLat + r * Math.cos(a) / 110540]);
+            }
+            for (var i = 0; i < 6; i++) {
+                var a = (i * 60 + 30) * Math.PI / 180, r = radius * 2 / 3;
+                pts.push([cLng + r * Math.sin(a) / (111320 * Math.cos(lr)), cLat + r * Math.cos(a) / 110540]);
+            }
+            return pts;
+        }
+
+        function batchCalculate(points) {
+            var panel = document.getElementById("resultsPanel");
+            var list = document.getElementById("resultsList");
+            var saved = document.getElementById("resultsSaved");
+            panel.classList.add("show"); saved.style.display = "none";
+            list.innerHTML = '<div class="results-loading">正在计算 ' + points.length + ' 个区块 x ' + DESTS.length + ' 个目的地...</div>';
+
+            fetch("/api/batch-driving", {
+                method: "POST", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ points: points.map(function (p) { return p[0].toFixed(6) + "," + p[1].toFixed(6); }) }),
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) { list.innerHTML = '<div class="results-loading">失败: ' + data.error + "</div>"; return; }
+                var html = "";
+                data.results.forEach(function (r) {
+                    html += '<div class="result-row"><div class="result-row-head"><div class="result-num">' + r.index + '</div><div class="result-addr">' + r.address + '</div></div><div class="result-dests">';
+                    var minSec = Infinity;
+                    r.destinations.forEach(function (d, i) {
+                        var c = DEST_COLORS[i % DEST_COLORS.length];
+                        if (d.error) {
+                            html += '<div class="result-dest-line"><span class="dot" style="background:'+c+'"></span><span class="name">'+d.destination+'</span><span class="err">失败</span></div>';
+                        } else {
+                            html += '<div class="result-dest-line"><span class="dot" style="background:'+c+'"></span><span class="name">'+d.destination+'</span><span class="val">'+d.duration+'</span><span class="dist">'+d.distance+'</span></div>';
+                            if (d.seconds > 0 && d.seconds < minSec) minSec = d.seconds;
+                        }
+                    });
+                    html += '</div></div>';
+                    if (minSec < Infinity) {
+                        var co = r.origin.split(",");
+                        heatPoints.push({ lng: parseFloat(co[0]), lat: parseFloat(co[1]), seconds: minSec });
+                    }
+                });
+                list.innerHTML = html;
+                saved.style.display = "inline";
+                renderHeatOverlays();
+            })
+            .catch(function () { list.innerHTML = '<div class="results-loading">请求失败</div>'; });
+        }
+    </script>
+</body>
+</html>

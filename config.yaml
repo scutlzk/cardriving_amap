@@ -1,0 +1,10 @@
+js_api:
+  key: ""
+  security_key: ""
+
+web_api:
+  key: ""
+
+destinations:
+  - "上海市闵行区宜山路2240号"
+  - "上海市杨浦滨江平凉街道"
