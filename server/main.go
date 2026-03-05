@@ -166,7 +166,8 @@ func handleDriving(w http.ResponseWriter, r *http.Request) {
 // ---------- 批量画圈 ----------
 
 type batchRequest struct {
-	Points []string `json:"points"`
+	Points     []string `json:"points"`
+	IntervalMs int      `json:"interval_ms"`
 }
 
 type batchPointResult struct {
@@ -192,42 +193,43 @@ func handleBatchDriving(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	interval := time.Duration(req.IntervalMs) * time.Millisecond
 	results := make([]batchPointResult, len(req.Points))
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 5)
+	callCount := 0
 
 	for i, point := range req.Points {
-		wg.Add(1)
-		go func(idx int, pt string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+		item := batchPointResult{Index: i + 1, Origin: point}
 
-			item := batchPointResult{Index: idx + 1, Origin: pt}
-			if regeo, err := amap.ReGeoCode(pt); err == nil {
-				item.Address = regeo.FormattedAddress
+		if callCount > 0 && interval > 0 {
+			time.Sleep(interval)
+		}
+		callCount++
+		if regeo, err := amap.ReGeoCode(point); err == nil {
+			item.Address = regeo.FormattedAddress
+		} else {
+			item.Address = point
+		}
+
+		item.Destinations = make([]destResult, len(destinations))
+		for j, dest := range destinations {
+			if interval > 0 {
+				time.Sleep(interval)
+			}
+			callCount++
+			dr := destResult{Destination: dest.Address}
+			if detail, err := amap.GetDrivingDetail(point, dest.Coordinate); err == nil {
+				dr.Duration = formatDuration(detail.Duration)
+				dr.Distance = formatDistance(detail.DistanceMeters)
+				dr.Seconds = int64(detail.Duration.Seconds())
+				dr.Meters = detail.DistanceMeters
 			} else {
-				item.Address = pt
+				dr.Error = err.Error()
 			}
+			item.Destinations[j] = dr
+		}
 
-			item.Destinations = make([]destResult, len(destinations))
-			for j, dest := range destinations {
-				dr := destResult{Destination: dest.Address}
-				if detail, err := amap.GetDrivingDetail(pt, dest.Coordinate); err == nil {
-					dr.Duration = formatDuration(detail.Duration)
-					dr.Distance = formatDistance(detail.DistanceMeters)
-					dr.Seconds = int64(detail.Duration.Seconds())
-					dr.Meters = detail.DistanceMeters
-				} else {
-					dr.Error = err.Error()
-				}
-				item.Destinations[j] = dr
-			}
-
-			results[idx] = item
-		}(i, point)
+		results[i] = item
 	}
-	wg.Wait()
 
 	var filePoints []filePointRecord
 	for _, r := range results {

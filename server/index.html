@@ -66,6 +66,23 @@
             0%,100% { box-shadow: 0 4px 14px rgba(255,77,79,0.35); }
             50%     { box-shadow: 0 4px 22px rgba(255,77,79,0.55); }
         }
+        .toolbar-config {
+            display: flex; align-items: center; gap: 10px;
+            background: rgba(255,255,255,0.94);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border-radius: 10px; padding: 7px 14px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        .toolbar-config label {
+            font-size: 12px; color: #595959; font-weight: 500;
+            display: flex; align-items: center; gap: 4px; white-space: nowrap;
+        }
+        .toolbar-input {
+            width: 48px; padding: 4px 6px; border: 1px solid #d9d9d9;
+            border-radius: 6px; font-size: 12px; text-align: center;
+            font-family: inherit; outline: none;
+        }
+        .toolbar-input:focus { border-color: #1677ff; }
 
         /* ---- 批量结果面板 ---- */
         .results-panel {
@@ -169,12 +186,49 @@
             box-shadow: 0 4px 16px rgba(0,0,0,0.08);
             z-index: 1000; display: none;
         }
-        .legend-title { font-size: 12px; font-weight: 600; color: #262626; margin-bottom: 6px; }
+        .legend-header {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 10px; margin-bottom: 8px;
+        }
+        .legend-title { font-size: 12px; font-weight: 600; color: #262626; }
+        .heat-select {
+            font-size: 11px; padding: 3px 8px; border-radius: 6px;
+            border: 1px solid #d9d9d9; background: #fff; color: #262626;
+            font-family: inherit; cursor: pointer; outline: none;
+            max-width: 160px; text-overflow: ellipsis;
+        }
+        .heat-select:focus { border-color: #1677ff; }
+        .legend-radius {
+            display: flex; align-items: center; gap: 8px;
+            margin-bottom: 8px; padding-bottom: 8px;
+            border-bottom: 1px solid rgba(0,0,0,0.06);
+        }
+        .legend-radius-label { font-size: 11px; color: #8c8c8c; white-space: nowrap; }
+        .legend-radius-val {
+            font-size: 11px; font-weight: 600; color: #262626;
+            min-width: 38px; text-align: right;
+        }
+        .legend-radius input[type=range] {
+            -webkit-appearance: none; appearance: none;
+            flex: 1; height: 4px; border-radius: 2px;
+            background: #e8e8e8; outline: none; cursor: pointer;
+        }
+        .legend-radius input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 14px; height: 14px; border-radius: 50%;
+            background: #1677ff; border: 2px solid #fff;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2); cursor: pointer;
+        }
+        .legend-radius input[type=range]::-moz-range-thumb {
+            width: 14px; height: 14px; border-radius: 50%;
+            background: #1677ff; border: 2px solid #fff;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2); cursor: pointer;
+        }
         .legend-bar {
-            width: 160px; height: 14px; border-radius: 7px;
+            width: 200px; height: 14px; border-radius: 7px;
             background: linear-gradient(to right,
-                hsl(120,70%,45%), hsl(90,70%,48%), hsl(60,75%,48%),
-                hsl(30,80%,50%), hsl(0,75%,50%));
+                hsl(240,75%,50%), hsl(270,75%,50%), hsl(300,75%,50%),
+                hsl(330,75%,50%), hsl(0,75%,50%));
         }
         .legend-labels {
             display: flex; justify-content: space-between;
@@ -188,6 +242,10 @@
     <div class="toolbar">
         <button class="btn btn-primary" id="btnDraw" onclick="startDraw()">画圈分析</button>
         <button class="btn btn-secondary" onclick="undoAll()">撤销</button>
+        <div class="toolbar-config">
+            <label>取点 <input type="number" id="pointCount" value="10" min="3" max="200" class="toolbar-input"></label>
+            <label>间隔 <input type="number" id="reqInterval" value="0.5" min="0" max="10" step="0.1" class="toolbar-input">s</label>
+        </div>
     </div>
 
     <div class="panel info-panel" id="infoPanel"></div>
@@ -205,7 +263,15 @@
     </div>
 
     <div class="legend" id="legend">
-        <div class="legend-title">驾车最短耗时</div>
+        <div class="legend-header">
+            <div class="legend-title">驾车耗时热力图</div>
+            <select class="heat-select" id="heatDestSelect" onchange="onHeatDestChange()"></select>
+        </div>
+        <div class="legend-radius">
+            <span class="legend-radius-label">半径</span>
+            <input type="range" id="heatRadiusSlider" min="30" max="2000" step="10" value="600" oninput="onRadiusChange(this.value)">
+            <span class="legend-radius-val" id="heatRadiusVal">600m</span>
+        </div>
         <div class="legend-bar"></div>
         <div class="legend-labels">
             <span id="legendMin">近</span>
@@ -222,7 +288,11 @@
         var DEST_COLORS = ["#ff4d4f","#722ed1","#13c2c2","#eb2f96","#fa8c16","#52c41a","#2f54eb","#faad14"];
         var map, mouseTool, AMapRef;
         var originMarker = null, currentCircle = null, pointMarkers = [], isDrawing = false;
-        var heatPoints = [], heatCircles = [];
+        var heatPoints = [];
+        var allDestAddresses = [];
+        var heatCanvas, heatLayer;
+        var selectedHeatDest = "__min__";
+        var heatInfluenceMeters = 600;
 
         AMapLoader.load({
             key: "{{.JSKey}}",
@@ -247,6 +317,19 @@
 
             buildInfoPanel();
 
+            DESTS.forEach(function (d) { addDestAddress(d.address); });
+
+            heatCanvas = document.createElement("canvas");
+            heatCanvas.width = map.getSize().width;
+            heatCanvas.height = map.getSize().height;
+            heatLayer = new AMap.CustomLayer(heatCanvas, {
+                zIndex: 12,
+                zooms: [3, 18],
+            });
+            heatLayer.render = renderHeatCanvas;
+            map.add(heatLayer);
+            buildHeatSelector();
+
             mouseTool = new AMap.MouseTool(map);
             mouseTool.on("draw", function (event) {
                 isDrawing = false;
@@ -260,7 +343,9 @@
                 });
                 var center = currentCircle.getCenter();
                 var radius = currentCircle.getRadius();
-                var points = generatePoints(center, radius);
+                var count = parseInt(document.getElementById("pointCount").value, 10) || 10;
+                count = Math.max(3, Math.min(200, count));
+                var points = generatePoints(center, radius, count);
                 points.forEach(function (pt, i) {
                     pointMarkers.push(new AMap.Marker({
                         position: new AMap.LngLat(pt[0], pt[1]), map: map,
@@ -294,20 +379,21 @@
                     .then(function (data) {
                         if (data.error) { content.innerHTML = '<div class="result-calc">计算失败</div>'; return; }
                         var html = '<div class="result-origin">' + data.address + '</div>';
-                        var minSec = Infinity;
+                        var destSecs = {};
                         data.results.forEach(function (r, i) {
                             var c = DEST_COLORS[i % DEST_COLORS.length];
                             if (r.error) {
                                 html += '<div class="rm-row"><span class="rm-dot" style="background:'+c+'"></span><span class="rm-name">'+r.destination+'</span><span class="rm-err">失败</span></div>';
                             } else {
                                 html += '<div class="rm-row"><span class="rm-dot" style="background:'+c+'"></span><span class="rm-name">'+r.destination+'</span><span class="rm-time">'+r.duration+'</span><span class="rm-dist">'+r.distance+'</span></div>';
-                                if (r.seconds > 0 && r.seconds < minSec) minSec = r.seconds;
+                                if (r.seconds > 0) { destSecs[r.destination] = r.seconds; addDestAddress(r.destination); }
                             }
                         });
                         content.innerHTML = html;
-                        if (minSec < Infinity) {
-                            heatPoints.push({ lng: parseFloat(lng), lat: parseFloat(lat), seconds: minSec });
-                            renderHeatOverlays();
+                        if (Object.keys(destSecs).length > 0) {
+                            heatPoints.push({ lng: parseFloat(lng), lat: parseFloat(lat), destSeconds: destSecs });
+                            buildHeatSelector();
+                            renderHeatCanvas();
                         }
                     })
                     .catch(function () { content.innerHTML = '<div class="result-calc">请求失败</div>'; });
@@ -328,7 +414,37 @@
             el.innerHTML = html;
         }
 
-        /* ============ 热力覆盖 ============ */
+        /* ============ 热力图层 (CustomLayer + Canvas) ============ */
+
+        function addDestAddress(addr) {
+            if (allDestAddresses.indexOf(addr) === -1) allDestAddresses.push(addr);
+        }
+
+        function buildHeatSelector() {
+            var sel = document.getElementById("heatDestSelect");
+            var cur = sel.value || "__min__";
+            sel.innerHTML = '<option value="__min__">最短耗时（综合）</option>';
+            allDestAddresses.forEach(function (addr) {
+                var opt = document.createElement("option");
+                opt.value = addr;
+                opt.textContent = addr;
+                sel.appendChild(opt);
+            });
+            sel.value = cur;
+            if (!sel.value) sel.value = "__min__";
+        }
+
+        function onHeatDestChange() {
+            selectedHeatDest = document.getElementById("heatDestSelect").value;
+            renderHeatCanvas();
+        }
+
+        function onRadiusChange(val) {
+            heatInfluenceMeters = parseInt(val, 10);
+            document.getElementById("heatRadiusVal").textContent = val + "m";
+            renderHeatCanvas();
+        }
+
         function loadExistingResults() {
             fetch("/api/results").then(function (r) { return r.json(); }).then(function (records) {
                 if (!records || !records.length) return;
@@ -337,48 +453,138 @@
                     rec.points.forEach(function (pt) {
                         var c = pt.coordinate ? pt.coordinate.split(",") : null;
                         if (!c || c.length !== 2) return;
-                        var minSec = Infinity;
+                        var destSecs = {};
                         if (pt.destinations && pt.destinations.length) {
-                            pt.destinations.forEach(function (d) { if (d.seconds > 0 && d.seconds < minSec) minSec = d.seconds; });
-                        } else if (pt.seconds > 0) {
-                            minSec = pt.seconds;
+                            pt.destinations.forEach(function (d) {
+                                if (d.seconds > 0) {
+                                    destSecs[d.address] = d.seconds;
+                                    addDestAddress(d.address);
+                                }
+                            });
+                        } else if (pt.seconds > 0 && rec.destination) {
+                            destSecs[rec.destination.address] = pt.seconds;
+                            addDestAddress(rec.destination.address);
                         }
-                        if (minSec < Infinity) {
-                            heatPoints.push({ lng: parseFloat(c[0]), lat: parseFloat(c[1]), seconds: minSec });
+                        if (Object.keys(destSecs).length > 0) {
+                            heatPoints.push({ lng: parseFloat(c[0]), lat: parseFloat(c[1]), destSeconds: destSecs });
                         }
                     });
                 });
-                renderHeatOverlays();
+                buildHeatSelector();
+                renderHeatCanvas();
             }).catch(function () {});
         }
 
-        function timeToColor(seconds, minSec, maxSec) {
-            if (maxSec <= minSec) return "hsl(120,70%,45%)";
-            var t = (seconds - minSec) / (maxSec - minSec);
-            return "hsl(" + Math.round(120 * (1 - t)) + ",75%,48%)";
+        function getPointSeconds(p, sel) {
+            if (sel !== "__min__") {
+                return p.destSeconds[sel] !== undefined ? p.destSeconds[sel] : null;
+            }
+            var min = Infinity;
+            for (var k in p.destSeconds) {
+                if (p.destSeconds[k] < min) min = p.destSeconds[k];
+            }
+            return min < Infinity ? min : null;
         }
 
-        function renderHeatOverlays() {
-            heatCircles.forEach(function (c) { map.remove(c); });
-            heatCircles = [];
-            if (!heatPoints.length) { document.getElementById("legend").style.display = "none"; return; }
-            var minSec = Infinity, maxSec = 0;
+        var HEAT_MIN_SEC = 1800, HEAT_MAX_SEC = 3000;
+
+        function secondsToRgb(sec) {
+            sec = Math.max(HEAT_MIN_SEC, Math.min(HEAT_MAX_SEC, sec));
+            var t = (sec - HEAT_MIN_SEC) / (HEAT_MAX_SEC - HEAT_MIN_SEC);
+            var h = (240 + 120 * t) % 360, s = 0.75, l = 0.50;
+            var c = (1 - Math.abs(2 * l - 1)) * s;
+            var x = c * (1 - Math.abs((h / 60) % 2 - 1));
+            var m = l - c / 2, r, g, b;
+            if (h < 60)       { r = c; g = x; b = 0; }
+            else if (h < 120) { r = x; g = c; b = 0; }
+            else if (h < 180) { r = 0; g = c; b = x; }
+            else if (h < 240) { r = 0; g = x; b = c; }
+            else if (h < 300) { r = x; g = 0; b = c; }
+            else              { r = c; g = 0; b = x; }
+            return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
+        }
+
+        function renderHeatCanvas() {
+            if (!heatCanvas || !map) return;
+            var size = map.getSize();
+            heatCanvas.width = size.width;
+            heatCanvas.height = size.height;
+            var ctx = heatCanvas.getContext("2d");
+
+            if (!heatPoints.length) {
+                document.getElementById("legend").style.display = "none";
+                return;
+            }
+
+            var sel = selectedHeatDest;
+            var pts = [];
             heatPoints.forEach(function (p) {
-                if (p.seconds < minSec) minSec = p.seconds;
-                if (p.seconds > maxSec) maxSec = p.seconds;
+                var sec = getPointSeconds(p, sel);
+                if (sec === null) return;
+                var pos = map.lngLatToContainer(new AMapRef.LngLat(p.lng, p.lat));
+                pts.push({ x: pos.x, y: pos.y, seconds: sec });
             });
-            heatPoints.forEach(function (p) {
-                var color = timeToColor(p.seconds, minSec, maxSec);
-                heatCircles.push(new AMapRef.Circle({
-                    center: [p.lng, p.lat], radius: 500,
-                    fillColor: color, fillOpacity: 0.38,
-                    strokeColor: color, strokeOpacity: 0.15, strokeWeight: 1,
-                    map: map, zIndex: 10, bubble: true,
-                }));
+            if (!pts.length) {
+                document.getElementById("legend").style.display = "none";
+                return;
+            }
+
+            var resolution = map.getResolution();
+            var maxInflPx = Math.max(8, Math.min(200, heatInfluenceMeters / resolution));
+            var maxInflSq = maxInflPx * maxInflPx;
+            var cellSize = maxInflPx;
+
+            var hash = {};
+            pts.forEach(function (p) {
+                var key = Math.floor(p.x / cellSize) + "_" + Math.floor(p.y / cellSize);
+                if (!hash[key]) hash[key] = [];
+                hash[key].push(p);
             });
+
+            var sc = 4;
+            var gw = Math.ceil(size.width / sc);
+            var gh = Math.ceil(size.height / sc);
+            var off = document.createElement("canvas");
+            off.width = gw; off.height = gh;
+            var offCtx = off.getContext("2d");
+            var img = offCtx.createImageData(gw, gh);
+            var px = img.data;
+
+            for (var gy = 0; gy < gh; gy++) {
+                var sy = gy * sc + sc * 0.5;
+                var hcy = Math.floor(sy / cellSize);
+                for (var gx = 0; gx < gw; gx++) {
+                    var sx = gx * sc + sc * 0.5;
+                    var hcx = Math.floor(sx / cellSize);
+                    var nd = Infinity, ns = 0;
+                    for (var dy = -1; dy <= 1; dy++) {
+                        for (var dx = -1; dx <= 1; dx++) {
+                            var bk = hash[(hcx+dx) + "_" + (hcy+dy)];
+                            if (!bk) continue;
+                            for (var i = 0; i < bk.length; i++) {
+                                var ex = bk[i].x - sx, ey = bk[i].y - sy;
+                                var d = ex*ex + ey*ey;
+                                if (d < nd) { nd = d; ns = bk[i].seconds; }
+                            }
+                        }
+                    }
+                    if (nd > maxInflSq) continue;
+                    var rgb = secondsToRgb(ns);
+                    var dr = Math.sqrt(nd) / maxInflPx;
+                    var a = dr < 0.7 ? 0.5 : 0.5 * (1 - (dr - 0.7) / 0.3);
+                    var idx = (gy * gw + gx) * 4;
+                    px[idx] = rgb[0]; px[idx+1] = rgb[1]; px[idx+2] = rgb[2];
+                    px[idx+3] = Math.round(Math.max(0, a) * 255);
+                }
+            }
+
+            offCtx.putImageData(img, 0, 0);
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(off, 0, 0, gw, gh, 0, 0, size.width, size.height);
+
             document.getElementById("legend").style.display = "block";
-            document.getElementById("legendMin").textContent = fmtSec(minSec);
-            document.getElementById("legendMax").textContent = fmtSec(maxSec);
+            document.getElementById("legendMin").textContent = "\u226430min";
+            document.getElementById("legendMax").textContent = "\u226550min";
         }
 
         function fmtSec(s) {
@@ -406,17 +612,17 @@
             document.getElementById("resultsSaved").style.display = "none";
         }
 
-        function generatePoints(center, radius) {
+        function generatePoints(center, radius, count) {
             var pts = [], cLng = center.getLng(), cLat = center.getLat();
             var lr = cLat * Math.PI / 180;
-            pts.push([cLng, cLat]);
-            for (var i = 0; i < 3; i++) {
-                var a = i * 2 * Math.PI / 3, r = radius / 3;
-                pts.push([cLng + r * Math.sin(a) / (111320 * Math.cos(lr)), cLat + r * Math.cos(a) / 110540]);
-            }
-            for (var i = 0; i < 6; i++) {
-                var a = (i * 60 + 30) * Math.PI / 180, r = radius * 2 / 3;
-                pts.push([cLng + r * Math.sin(a) / (111320 * Math.cos(lr)), cLat + r * Math.cos(a) / 110540]);
+            var golden = Math.PI * (3 - Math.sqrt(5));
+            for (var i = 0; i < count; i++) {
+                var r = radius * Math.sqrt(i / count);
+                var a = i * golden;
+                pts.push([
+                    cLng + r * Math.cos(a) / (111320 * Math.cos(lr)),
+                    cLat + r * Math.sin(a) / 110540
+                ]);
             }
             return pts;
         }
@@ -428,9 +634,15 @@
             panel.classList.add("show"); saved.style.display = "none";
             list.innerHTML = '<div class="results-loading">正在计算 ' + points.length + ' 个区块 x ' + DESTS.length + ' 个目的地...</div>';
 
+            var intervalSec = parseFloat(document.getElementById("reqInterval").value) || 0.5;
+            var intervalMs = Math.round(Math.max(0, intervalSec) * 1000);
+
             fetch("/api/batch-driving", {
                 method: "POST", headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ points: points.map(function (p) { return p[0].toFixed(6) + "," + p[1].toFixed(6); }) }),
+                body: JSON.stringify({
+                    points: points.map(function (p) { return p[0].toFixed(6) + "," + p[1].toFixed(6); }),
+                    interval_ms: intervalMs,
+                }),
             })
             .then(function (r) { return r.json(); })
             .then(function (data) {
@@ -438,25 +650,26 @@
                 var html = "";
                 data.results.forEach(function (r) {
                     html += '<div class="result-row"><div class="result-row-head"><div class="result-num">' + r.index + '</div><div class="result-addr">' + r.address + '</div></div><div class="result-dests">';
-                    var minSec = Infinity;
+                    var destSecs = {};
                     r.destinations.forEach(function (d, i) {
                         var c = DEST_COLORS[i % DEST_COLORS.length];
                         if (d.error) {
                             html += '<div class="result-dest-line"><span class="dot" style="background:'+c+'"></span><span class="name">'+d.destination+'</span><span class="err">失败</span></div>';
                         } else {
                             html += '<div class="result-dest-line"><span class="dot" style="background:'+c+'"></span><span class="name">'+d.destination+'</span><span class="val">'+d.duration+'</span><span class="dist">'+d.distance+'</span></div>';
-                            if (d.seconds > 0 && d.seconds < minSec) minSec = d.seconds;
+                            if (d.seconds > 0) { destSecs[d.destination] = d.seconds; addDestAddress(d.destination); }
                         }
                     });
                     html += '</div></div>';
-                    if (minSec < Infinity) {
+                    if (Object.keys(destSecs).length > 0) {
                         var co = r.origin.split(",");
-                        heatPoints.push({ lng: parseFloat(co[0]), lat: parseFloat(co[1]), seconds: minSec });
+                        heatPoints.push({ lng: parseFloat(co[0]), lat: parseFloat(co[1]), destSeconds: destSecs });
                     }
                 });
                 list.innerHTML = html;
                 saved.style.display = "inline";
-                renderHeatOverlays();
+                buildHeatSelector();
+                renderHeatCanvas();
             })
             .catch(function () { list.innerHTML = '<div class="results-loading">请求失败</div>'; });
         }
